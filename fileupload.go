@@ -2,6 +2,7 @@ package fileupload
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
@@ -10,6 +11,7 @@ import (
 	"os"
 	"strconv"
 
+	"cloud.google.com/go/storage"
 	"github.com/kennygrant/sanitize"
 )
 
@@ -18,7 +20,7 @@ type File struct {
 	URL      string `json:"URL"`
 }
 
-func FromRequest(req *http.Request, path string) (string, string, error) {
+func FromRequestToFile(req *http.Request, path string) (string, string, error) {
 	req.ParseMultipartForm(32)
 	file, handler, err := req.FormFile("file")
 	if err != nil {
@@ -39,6 +41,41 @@ func FromRequest(req *http.Request, path string) (string, string, error) {
 		return "", "", err
 	}
 	return filename, fullpath, nil
+}
+
+func FromRequestToGoogleBucket(req *http.Request, bucketName string) (string, string, error) {
+	req.ParseMultipartForm(32)
+	file, handler, err := req.FormFile("file")
+	if err != nil {
+		return "", "", err
+	}
+	defer file.Close()
+
+	ctx := context.Background()
+	client, err := storage.NewClient(ctx)
+	if err != nil {
+		// TODO: Handle error.
+	}
+	bkt := client.Bucket(bucketName)
+
+	filename := handler.Filename
+	// fullpath := path + filename
+
+	obj := bkt.Object(filename)
+	if err != nil {
+		return "", "", err
+	}
+	w := obj.NewWriter(ctx)
+	_, err = io.Copy(w, file)
+	if err != nil {
+		return "", "", err
+	}
+
+	if err := w.Close(); err != nil {
+		return "", "", err
+	}
+
+	return filename, bucketName, nil
 }
 
 func FromBuffer(name string, path string, body io.Reader) (string, string, error) {
