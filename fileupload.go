@@ -339,3 +339,34 @@ func (ip *imageProcessHelper) ProcessImage(filename string, bts []byte, ops *ope
 	}
 	return ip.fileSaver.SaveFile(filename, res.Body)
 }
+
+type LocalFileStorage struct {
+	AttachmentsFolder        string
+	AttachmentsFolderBaseURL string
+}
+
+func NewLocalFileStorage(attachmentsFolder string, attachmentsFolderBaseURL string) *LocalFileStorage {
+	return &LocalFileStorage{
+		attachmentsFolder,
+		attachmentsFolderBaseURL,
+	}
+}
+
+func (fs *LocalFileStorage) SaveFile(filename string, r io.Reader) (bts *bytes.Buffer, fileName string, url string, err error) {
+	filename = getValidFileName(fs.AttachmentsFolder, filename)
+	f, err := os.OpenFile(fs.AttachmentsFolder+filename, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("Failed to create a file on the filesystem: %v", err)
+	}
+	defer f.Close()
+	if err != nil {
+
+		return nil, "", "", fmt.Errorf("failed to get bytes from the original image: %v", err)
+	}
+	copy := io.TeeReader(r, f)
+	bts, err = ioutil.ReadAll(copy)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to save the original image: %v", err)
+	}
+	return bytes.NewBuffer(bts), filename, fs.AttachmentsFolderBaseURL + filename, nil
+}
