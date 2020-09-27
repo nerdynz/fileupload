@@ -20,7 +20,6 @@ import (
 	"strings"
 
 	"github.com/kennygrant/sanitize"
-	pngquant "github.com/manhtai/gopngquant"
 )
 
 func FromRequestToFile(req *http.Request, path string) (string, string, error) {
@@ -103,14 +102,19 @@ func NewProcessingOps() *operations {
 	return ops
 }
 
-func (o *operation) addParam(key string, val interface{}) {
+func (o *operation) AddParam(key string, val interface{}) {
 	if o.Params == nil {
 		o.Params = make(map[string]interface{})
 	}
 	o.Params[key] = val
 }
 
-func (o *operations) add(op string) {
+func (o *operation) AddFloat(key string, val float64) {
+	str := strconv.FormatFloat(val, 'f', 6, 64)
+	o.AddParam(key, str)
+}
+
+func (o *operations) Add(op string) {
 	if o.Ops == nil {
 		o.Ops = make([]*operation, 0)
 	}
@@ -119,7 +123,11 @@ func (o *operations) add(op string) {
 	})
 }
 
-func (o *operations) last() *operation {
+func (o *operations) OpAt(index int) *operation {
+	return o.Ops[index]
+}
+
+func (o *operations) LastOp() *operation {
 	return o.Ops[len(o.Ops)-1]
 }
 
@@ -143,7 +151,7 @@ func ProcessedImage(r io.Reader, imageType string, width int, height int, qualit
 
 	originalImageType := "jpg"
 	if convert {
-		ops.add("convert")
+		ops.Add("convert")
 
 		// converting
 		if imageType == "jpg" {
@@ -152,15 +160,15 @@ func ProcessedImage(r io.Reader, imageType string, width int, height int, qualit
 		} else if imageType == "png" {
 			originalImageType = "jpg"
 		}
-		ops.last().addParam("type", imageType)
+		ops.LastOp().AddParam("type", imageType)
 	}
 
-	ops.add("fit")
-	ops.last().addParam("width", width)    //absolute max
-	ops.last().addParam("height", height)  // dont need its ratio based
-	ops.last().addParam("stripmeta", true) // dont need its ratio based
-	ops.last().addParam("quality", quality)
-	// ops.last().addParam("compression", quality)
+	ops.Add("fit")
+	ops.LastOp().AddParam("width", width)    //absolute max
+	ops.LastOp().AddParam("height", height)  // dont need its ratio based
+	ops.LastOp().AddParam("stripmeta", true) // dont need its ratio based
+	ops.LastOp().AddParam("quality", quality)
+	// ops.LastOp().AddParam("compression", quality)
 	bOps, err := json.Marshal(ops.Ops)
 	if err != nil {
 		return nil, err
@@ -273,13 +281,18 @@ func NewImageHelper(endpoint string, fs FileSaver) *imageProcessHelper {
 	}
 }
 
-func (ip *imageProcessHelper) GetDimensions(bts io.Reader, ext string) (width int, height int, err error) {
+func GetFileExt(filename string) string {
+	ext := filepath.Ext(strings.ToLower(filename))
+	return ext
+}
+
+func GetImageDimensions(imgData io.Reader, ext string) (width int, height int, err error) {
 	ext = strings.ToLower(ext)
 	var imgConfig image.Config
 	if strings.HasSuffix(ext, "jpeg") || strings.HasSuffix(ext, "jpg") {
-		imgConfig, err = jpeg.DecodeConfig(bytes.NewBuffer(bts))
+		imgConfig, err = jpeg.DecodeConfig(imgData)
 	} else {
-		imgConfig, err = png.DecodeConfig(bytes.NewBuffer(bts))
+		imgConfig, err = png.DecodeConfig(imgData)
 	}
 	if err != nil {
 		return -1, -1, fmt.Errorf("failed to get the original image dimensions %v", err)
@@ -287,57 +300,58 @@ func (ip *imageProcessHelper) GetDimensions(bts io.Reader, ext string) (width in
 	return imgConfig.Width, imgConfig.Width, nil
 }
 
-func (ip *imageProcessHelper) ProcessImage(filename string, imgData io.Reader, ops *operations) (byts *bytes.Buffer, fileName string, url string, err error) {
-	ext := filepath.Ext(filename)
+func ProcessImage(filename string, imgData io.Reader, ops *operations) (byts []byte, err error) {
+	return ProcessImageWithEndpoint(os.Getenv("IMAGE_PROCESSING_ENDPOINT"), filename, imgData, ops)
+}
 
+func ProcessImageWithEndpoint(endpoint string, filename string, imgData io.Reader, ops *operations) (b []byte, err error) {
+	if strings.HasSuffix(endpoint, "/") {
+		endpoint += "/"
+	}
+	ext := filepath.Ext(filename)
 	bOps, err := json.Marshal(ops.Ops)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("json.Marshal %v", err)
+		return nil, fmt.Errorf("json.Marshal %v", err)
 	}
-	endpoint := ip.endpoint + "pipeline?operations=" + u.QueryEscape(string(bOps))
-	var b bytes.Buffer
-	mpW := multipart.NewWriter(&b)
+	endpoint += "pipeline?operations=" + u.QueryEscape(string(bOps))
+	var buf bytes.Buffer
+	mpW := multipart.NewWriter(&buf)
 	fw, err := mpW.CreateFormFile("file", "placeholder."+ext)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("mpW.CreateFormFile %v", err)
+		return nil, fmt.Errorf("mpW.CreateFormFile %v", err)
 		// ctx.ErrorJSON(http.StatusOK, "couldn't create form file ", err)
 	}
 	_, err = io.Copy(fw, imgData)
 	if err != nil {
 		// ctx.ErrorJSON(http.StatusOK, "failed to copy from reqFile", err)
-		return nil, "", "", fmt.Errorf("failed to copy to multipart writer %v", err)
+		return nil, fmt.Errorf("failed to copy to multipart writer %v", err)
 	}
 	err = mpW.Close()
 	if err != nil {
-		return nil, "", "", fmt.Errorf("failed to close multipart writer %v", err)
+		return nil, fmt.Errorf("failed to close multipart writer %v", err)
 	}
 
-	req, err := http.NewRequest("POST", endpoint, &b)
+	req, err := http.NewRequest("POST", endpoint, &buf)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("failed to copy from req %v", err)
+		return nil, fmt.Errorf("failed to copy from req %v", err)
 	}
 	req.Header.Set("Content-Type", mpW.FormDataContentType())
 
 	client := &http.Client{}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("statuscode %v", err)
+		return nil, fmt.Errorf("statuscode %v", err)
 	}
 	if res.StatusCode != 200 {
-		return nil, "", "", fmt.Errorf("error status code is: %d", res.StatusCode)
+		return nil, fmt.Errorf("failed with status code: %d", res.StatusCode)
 	}
 	defer res.Body.Close()
 
-	if ext == "png" {
-		cmpressedPNG := make([]byte, 0)
-		buf := bytes.NewBuffer(cmpressedPNG)
-		err = pngquant.CompressPng(res.Body, buf, 5)
-		if err != nil {
-			return nil, "", "", fmt.Errorf("pngquant.CompressPng %v", err)
-		}
-		return ip.fileSaver.SaveFile(filename, buf)
+	b, err = ioutil.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("failed reading final bytes %v", err)
 	}
-	return ip.fileSaver.SaveFile(filename, res.Body)
+	return b, nil
 }
 
 type LocalFileStorage struct {
@@ -346,27 +360,44 @@ type LocalFileStorage struct {
 }
 
 func NewLocalFileStorage(attachmentsFolder string, attachmentsFolderBaseURL string) *LocalFileStorage {
+	if !strings.HasSuffix(attachmentsFolderBaseURL, "/") {
+		attachmentsFolderBaseURL += "/"
+	}
 	return &LocalFileStorage{
 		attachmentsFolder,
 		attachmentsFolderBaseURL,
 	}
 }
 
-func (fs *LocalFileStorage) SaveFile(filename string, r io.Reader) (bts *bytes.Buffer, fileName string, url string, err error) {
-	filename = getValidFileName(fs.AttachmentsFolder, filename)
+func (fs *LocalFileStorage) GetURL(filename string) (url string) {
+	return fs.AttachmentsFolderBaseURL + filename
+}
+
+func (fs *LocalFileStorage) OpenFile(filename string) (b []byte, fileName string, url string, err error) {
 	f, err := os.OpenFile(fs.AttachmentsFolder+filename, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("Failed to create a file on the filesystem: %v", err)
 	}
-	defer f.Close()
-	if err != nil {
-
-		return nil, "", "", fmt.Errorf("failed to get bytes from the original image: %v", err)
-	}
-	copy := io.TeeReader(r, f)
-	bts, err = ioutil.ReadAll(copy)
+	b, err = ioutil.ReadAll(f)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("failed to save the original image: %v", err)
 	}
-	return bytes.NewBuffer(bts), filename, fs.AttachmentsFolderBaseURL + filename, nil
+	return b, filename, fs.GetURL(filename), nil
+}
+
+func (fs *LocalFileStorage) SaveFile(filename string, r io.Reader) (fileName string, url string, err error) {
+	filename = getValidFileName(fs.AttachmentsFolder, filename)
+	f, err := os.OpenFile(fs.AttachmentsFolder+filename, os.O_RDWR|os.O_CREATE, 0666)
+	if err != nil {
+		return "", "", fmt.Errorf("Failed to create a file on the filesystem: %v", err)
+	}
+	defer f.Close()
+	if err != nil {
+		return "", "", fmt.Errorf("failed to get bytes from the original image: %v", err)
+	}
+	_, err = io.Copy(f, r)
+	if err != nil {
+		return "", "", fmt.Errorf("failed to save the original image: %v", err)
+	}
+	return filename, fs.AttachmentsFolderBaseURL + filename, nil
 }
