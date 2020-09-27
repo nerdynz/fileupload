@@ -273,7 +273,7 @@ func NewImageHelper(endpoint string, fs FileSaver) *imageProcessHelper {
 	}
 }
 
-func (ip *imageProcessHelper) GetDimensions(bts []byte, ext string) (width int, height int, err error) {
+func (ip *imageProcessHelper) GetDimensions(bts io.Reader, ext string) (width int, height int, err error) {
 	ext = strings.ToLower(ext)
 	var imgConfig image.Config
 	if strings.HasSuffix(ext, "jpeg") || strings.HasSuffix(ext, "jpg") {
@@ -287,7 +287,7 @@ func (ip *imageProcessHelper) GetDimensions(bts []byte, ext string) (width int, 
 	return imgConfig.Width, imgConfig.Width, nil
 }
 
-func (ip *imageProcessHelper) ProcessImage(filename string, bts []byte, ops *operations) (byts *bytes.Buffer, fileName string, url string, err error) {
+func (ip *imageProcessHelper) ProcessImage(filename string, imgData io.Reader, ops *operations) (byts *bytes.Buffer, fileName string, url string, err error) {
 	ext := filepath.Ext(filename)
 
 	bOps, err := json.Marshal(ops.Ops)
@@ -302,7 +302,7 @@ func (ip *imageProcessHelper) ProcessImage(filename string, bts []byte, ops *ope
 		return nil, "", "", fmt.Errorf("mpW.CreateFormFile %v", err)
 		// ctx.ErrorJSON(http.StatusOK, "couldn't create form file ", err)
 	}
-	_, err = io.Copy(fw, bytes.NewBuffer(bts))
+	_, err = io.Copy(fw, imgData)
 	if err != nil {
 		// ctx.ErrorJSON(http.StatusOK, "failed to copy from reqFile", err)
 		return nil, "", "", fmt.Errorf("failed to copy to multipart writer %v", err)
