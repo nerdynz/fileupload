@@ -5,21 +5,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"image"
+	"image/jpeg"
+	"image/png"
 	"io"
 	"io/ioutil"
 	"mime/multipart"
 	"net/http"
-	"net/url"
+	u "net/url"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	"github.com/kennygrant/sanitize"
+	pngquant "github.com/manhtai/gopngquant"
 )
-
-type File struct {
-	FileName string `json:"FileName"`
-	URL      string `json:"URL"`
-}
 
 func FromRequestToFile(req *http.Request, path string) (string, string, error) {
 	req.ParseMultipartForm(32)
@@ -96,6 +98,11 @@ type operations struct {
 	Ops []*operation
 }
 
+func NewProcessingOps() *operations {
+	ops := &operations{}
+	return ops
+}
+
 func (o *operation) addParam(key string, val interface{}) {
 	if o.Params == nil {
 		o.Params = make(map[string]interface{})
@@ -116,6 +123,7 @@ func (o *operations) last() *operation {
 	return o.Ops[len(o.Ops)-1]
 }
 
+// ProcessedImage deprecated not flexible enough
 func ProcessedImageFromRequest(req *http.Request, imageType string, width int, height int, quality int, convert bool) ([]byte, error) {
 	err := req.ParseMultipartForm(32)
 	if err != nil {
@@ -129,6 +137,7 @@ func ProcessedImageFromRequest(req *http.Request, imageType string, width int, h
 	return ProcessedImage(file, imageType, width, height, quality, convert)
 }
 
+// ProcessedImage deprecated not flexible enough
 func ProcessedImage(r io.Reader, imageType string, width int, height int, quality int, convert bool) ([]byte, error) {
 	ops := &operations{}
 
@@ -156,7 +165,12 @@ func ProcessedImage(r io.Reader, imageType string, width int, height int, qualit
 	if err != nil {
 		return nil, err
 	}
-	endpoint := os.Getenv("IMAGE_PROCESSING_ENDPOINT") + "pipeline?operations=" + url.QueryEscape(string(bOps))
+
+	imgProcessingEndpoint := os.Getenv("IMAGE_PROCESSING_ENDPOINT")
+	if imgProcessingEndpoint == "" {
+		imgProcessingEndpoint = os.Getenv("IMAGINARY_ENDPOINT")
+	}
+	endpoint := imgProcessingEndpoint + "pipeline?operations=" + u.QueryEscape(string(bOps))
 
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
@@ -241,4 +255,87 @@ func DownloadToFileNoSanitize(url string, filename string, filepath string) (str
 		return "", "", err
 	}
 	return FromBytesNoSanitize(filename, filepath, b)
+}
+
+type FileSaver interface {
+	SaveFile(filename string, b io.Reader) (bts *bytes.Buffer, fileName string, url string, err error)
+}
+
+type imageProcessHelper struct {
+	fileSaver FileSaver
+	endpoint  string
+}
+
+func NewImageHelper(endpoint string, fs FileSaver) *imageProcessHelper {
+	return &imageProcessHelper{
+		fs,
+		endpoint,
+	}
+}
+
+func (ip *imageProcessHelper) GetDimensions(bts []byte, ext string) (width int, height int, err error) {
+	ext = strings.ToLower(ext)
+	var imgConfig image.Config
+	if strings.HasSuffix(ext, "jpeg") || strings.HasSuffix(ext, "jpg") {
+		imgConfig, err = jpeg.DecodeConfig(bytes.NewBuffer(bts))
+	} else {
+		imgConfig, err = png.DecodeConfig(bytes.NewBuffer(bts))
+	}
+	if err != nil {
+		return -1, -1, fmt.Errorf("failed to get the original image dimensions %v", err)
+	}
+	return imgConfig.Width, imgConfig.Width, nil
+}
+
+func (ip *imageProcessHelper) ProcessImage(filename string, bts []byte, ops *operations) (byts *bytes.Buffer, fileName string, url string, err error) {
+	ext := filepath.Ext(filename)
+
+	bOps, err := json.Marshal(ops.Ops)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("json.Marshal %v", err)
+	}
+	endpoint := ip.endpoint + "pipeline?operations=" + u.QueryEscape(string(bOps))
+	var b bytes.Buffer
+	mpW := multipart.NewWriter(&b)
+	fw, err := mpW.CreateFormFile("file", "placeholder."+ext)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("mpW.CreateFormFile %v", err)
+		// ctx.ErrorJSON(http.StatusOK, "couldn't create form file ", err)
+	}
+	_, err = io.Copy(fw, bytes.NewBuffer(bts))
+	if err != nil {
+		// ctx.ErrorJSON(http.StatusOK, "failed to copy from reqFile", err)
+		return nil, "", "", fmt.Errorf("failed to copy to multipart writer %v", err)
+	}
+	err = mpW.Close()
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to close multipart writer %v", err)
+	}
+
+	req, err := http.NewRequest("POST", endpoint, &b)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("failed to copy from req %v", err)
+	}
+	req.Header.Set("Content-Type", mpW.FormDataContentType())
+
+	client := &http.Client{}
+	res, err := client.Do(req)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("statuscode %v", err)
+	}
+	if res.StatusCode != 200 {
+		return nil, "", "", fmt.Errorf("error status code is: %d", res.StatusCode)
+	}
+	defer res.Body.Close()
+
+	if ext == "png" {
+		cmpressedPNG := make([]byte, 0)
+		buf := bytes.NewBuffer(cmpressedPNG)
+		err = pngquant.CompressPng(res.Body, buf, 5)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("pngquant.CompressPng %v", err)
+		}
+		return ip.fileSaver.SaveFile(filename, buf)
+	}
+	return ip.fileSaver.SaveFile(filename, res.Body)
 }

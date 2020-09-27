@@ -1,5 +1,9 @@
 github.com/kennygrant/sanitize v1.2.4 h1:gN25/otpP5vAsO2djbMhF/LQX6R7+O1TB4yv8NzpJ3o=
 github.com/kennygrant/sanitize v1.2.4/go.mod h1:LGsjYYtgxbetdg5owWB2mpgUL6e2nfw2eObZ0u0qvak=
+github.com/manhtai/gopngquant v0.0.0-20180310144719-578cebc80102 h1:bShgP1wiKAQf05xCYAVZJ0ghMq6vnBy+ioKGPip1gEI=
+github.com/manhtai/gopngquant v0.0.0-20180310144719-578cebc80102/go.mod h1:jHu+AhKQgxLdKw7pisWUAD+BeH38FhmHDTtDBsXG1sA=
+github.com/manhtai/imagequant v0.0.0-20180310104925-a76d35dcb570 h1:RJ95GXJWSewO5Mhi+jD4sX6b5RUk3S3/OiDO0+BBxCI=
+github.com/manhtai/imagequant v0.0.0-20180310104925-a76d35dcb570/go.mod h1:LTQQU89K3IGCYY8a1nqBJVT1rH29s4nBygn/653/HBk=
 golang.org/x/crypto v0.0.0-20190308221718-c2843e01d9a2/go.mod h1:djNgcEr1/C05ACkg1iLfiJU5Ep61QUkGW8qpdssI0+w=
 golang.org/x/net v0.0.0-20200421231249-e086a090c8fd h1:QPwSajcTUrFriMF1nJ3XzgoqakqQEsnZf9LdXdi2nkI=
 golang.org/x/net v0.0.0-20200421231249-e086a090c8fd/go.mod h1:qpuaurCH72eLCgpAm/N6yyVIVM9cpaDIP3A8BGJEC5A=
