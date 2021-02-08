@@ -80,7 +80,7 @@ func getValidFileNameWithDupIndex(path string, filename string, duplicateIndex i
 
 	// path doesn't exist so we can return this path
 	if _, err := os.Stat(fullpath); os.IsNotExist(err) {
-		return dupStr + filename
+		return strings.ToUpper(dupStr + filename)
 	}
 
 	//otherwise increase file index and
@@ -297,18 +297,54 @@ func GetImageDimensions(imgData io.Reader, ext string) (width int, height int, e
 	if err != nil {
 		return -1, -1, fmt.Errorf("failed to get the original image dimensions %v", err)
 	}
-	return imgConfig.Width, imgConfig.Width, nil
+	return imgConfig.Width, imgConfig.Height, nil
 }
 
-func ProcessImage(filename string, imgData io.Reader, ops *operations) (byts []byte, err error) {
-	return ProcessImageWithEndpoint(os.Getenv("IMAGE_PROCESSING_ENDPOINT"), filename, imgData, ops)
+func ProcessImage(ext string, imgData io.Reader, ops *operations) (byts []byte, err error) {
+	return ProcessImageWithEndpoint(os.Getenv("IMAGE_PROCESSING_ENDPOINT"), ext, imgData, ops)
 }
 
-func ProcessImageWithEndpoint(endpoint string, filename string, imgData io.Reader, ops *operations) (b []byte, err error) {
-	if strings.HasSuffix(endpoint, "/") {
+type ImageMeta interface {
+	// GetUniqueID() string
+	GetFileName(string) string
+	// GetFinalImageSize() string
+	GetScale() float64
+	GetOriginalWidth() float64
+	GetOriginalHeight() float64
+	GetX() float64
+	GetY() float64
+	GetCropWidth() float64
+	GetCropHeight() float64
+	GetExt() string
+}
+
+func ProcessedImageScaleAndCropFromMeta(meta ImageMeta, imgData io.Reader) ([]byte, error) {
+	// first do your main processing
+	ops := NewProcessingOps()
+	// if meta.GetScale() > 1 {
+	ops.Add("enlarge")
+	// } else {
+	// 	ops.Add("resize")
+	// }
+
+	relativeWidth := meta.GetOriginalWidth() * meta.GetScale()
+	ops.LastOp().AddFloat("width", relativeWidth)
+	relativeHeight := meta.GetOriginalHeight() * meta.GetScale()
+	ops.LastOp().AddFloat("height", relativeHeight)
+	ops.Add("extract")
+	ops.LastOp().AddFloat("left", meta.GetX())
+	ops.LastOp().AddFloat("top", meta.GetY())
+	ops.LastOp().AddFloat("areawidth", meta.GetCropWidth())
+	ops.LastOp().AddFloat("areaheight", meta.GetCropWidth())
+
+	// return ProcessImageWithEndpoint(os.Getenv("IMAGE_PROCESSING_ENDPOINT"), meta.GetExt(), bytes.NewBuffer(meta.GetBytes()), ops) // dont pass bytes gets yuck with concurrency
+	return ProcessImageWithEndpoint(os.Getenv("IMAGE_PROCESSING_ENDPOINT"), meta.GetExt(), imgData, ops)
+}
+
+func ProcessImageWithEndpoint(endpoint string, ext string, imgData io.Reader, ops *operations) (b []byte, err error) {
+	if !strings.HasSuffix(endpoint, "/") {
 		endpoint += "/"
 	}
-	ext := filepath.Ext(filename)
 	bOps, err := json.Marshal(ops.Ops)
 	if err != nil {
 		return nil, fmt.Errorf("json.Marshal %v", err)
