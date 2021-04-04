@@ -422,7 +422,10 @@ func (fs *LocalFileStorage) OpenFile(filename string) (b []byte, fileName string
 	return b, filename, fs.GetURL(filename), nil
 }
 
-func (fs *LocalFileStorage) SaveFile(filename string, r io.Reader) (fileName string, url string, err error) {
+func (fs *LocalFileStorage) SaveFile(filename string, r io.Reader, sanitizePath bool) (fileName string, url string, err error) {
+	if sanitizePath {
+		filename = getValidFileName(fs.AttachmentsFolder, filename)
+	}
 	f, err := os.OpenFile(fs.AttachmentsFolder+filename, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return "", "", fmt.Errorf("Failed to create a file on the filesystem: %v", err)
