@@ -80,7 +80,7 @@ func getValidFileNameWithDupIndex(path string, filename string, duplicateIndex i
 
 	// path doesn't exist so we can return this path
 	if _, err := os.Stat(fullpath); os.IsNotExist(err) {
-		return strings.ToUpper(dupStr + filename)
+		return strings.ToLower(dupStr + filename)
 	}
 
 	//otherwise increase file index and
@@ -378,14 +378,15 @@ func ProcessImageWithEndpoint(endpoint string, ext string, imgData io.Reader, op
 	if err != nil {
 		return nil, fmt.Errorf("statuscode %v", err)
 	}
-	if res.StatusCode != 200 {
-		return nil, fmt.Errorf("failed with status code: %d", res.StatusCode)
-	}
 	defer res.Body.Close()
 
 	b, err = ioutil.ReadAll(res.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed reading final bytes %v", err)
+	}
+
+	if res.StatusCode != 200 {
+		return nil, fmt.Errorf("failed with status code: %d and message %s", res.StatusCode, string(b))
 	}
 	return b, nil
 }
@@ -422,7 +423,6 @@ func (fs *LocalFileStorage) OpenFile(filename string) (b []byte, fileName string
 }
 
 func (fs *LocalFileStorage) SaveFile(filename string, r io.Reader) (fileName string, url string, err error) {
-	filename = getValidFileName(fs.AttachmentsFolder, filename)
 	f, err := os.OpenFile(fs.AttachmentsFolder+filename, os.O_RDWR|os.O_CREATE, 0666)
 	if err != nil {
 		return "", "", fmt.Errorf("Failed to create a file on the filesystem: %v", err)
